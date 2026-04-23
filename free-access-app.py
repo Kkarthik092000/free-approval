@@ -1,134 +1,92 @@
 import streamlit as st
-import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import requests
+from bs4 import BeautifulSoup
 
 # ---------------------------------------
-# STREAMLIT CONFIG
+# UI
 # ---------------------------------------
 st.set_page_config(page_title="Auto Approval", layout="wide")
 st.title("🤖 Free Access Auto Approval Tool")
 
+EMAIL = st.secrets["EMAIL"]
+PASSWORD = st.secrets["PASSWORD"]
+
+BASE_URL = "https://api.mycaptain.co.in"
+LOGIN_URL = f"{BASE_URL}/users/sign_in"
+DATA_URL = f"{BASE_URL}/operations/kickstarter_transactions"
+
+
 # ---------------------------------------
-# AUTOMATION FUNCTION
+# FUNCTION
 # ---------------------------------------
 def run_automation(log_box):
+    session = requests.Session()
     logs = []
     approved_count = 0
-
-    # ✅ SECURE CREDENTIALS FROM SECRETS
-    EMAIL = st.secrets["EMAIL"]
-    PASSWORD = st.secrets["PASSWORD"]
 
     def log(msg):
         logs.append(msg)
         log_box.text("\n".join(logs))
 
-    LOGIN_URL = "https://api.mycaptain.co.in/users/sign_in"
-    DATA_URL = "https://api.mycaptain.co.in/operations/kickstarter_transactions"
-
-    options = webdriver.ChromeOptions()
-
-    # ✅ HEADLESS MODE (REQUIRED FOR CLOUD)
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    driver = webdriver.Chrome(options=options)
-    wait = WebDriverWait(driver, 20)
-
     try:
         # LOGIN
         log("🔐 Logging in...")
-        driver.get(LOGIN_URL)
+        login_page = session.get(LOGIN_URL)
 
-        wait.until(EC.presence_of_element_located((By.NAME, "user[email]"))).send_keys(EMAIL)
-        driver.find_element(By.NAME, "user[password]").send_keys(PASSWORD)
-        driver.find_element(By.NAME, "user[password]").submit()
+        soup = BeautifulSoup(login_page.text, "html.parser")
+        token = soup.find("input", {"name": "authenticity_token"})["value"]
 
-        time.sleep(5)
+        payload = {
+            "authenticity_token": token,
+            "user[email]": EMAIL,
+            "user[password]": PASSWORD
+        }
 
-        # OPEN PAGE
-        log("📊 Opening Transactions Page...")
-        driver.get(DATA_URL)
-        time.sleep(5)
+        session.post(LOGIN_URL, data=payload)
+        log("✅ Logged in")
 
-        # MAIN LOOP
-        while True:
-            found = False
-            log("🔍 Scanning page...")
+        # FETCH DATA
+        log("📊 Fetching transactions...")
+        page = session.get(DATA_URL)
+        soup = BeautifulSoup(page.text, "html.parser")
 
-            rows = driver.find_elements(By.XPATH, "//table/tbody/tr")
+        rows = soup.select("table tbody tr")
 
-            for i in range(len(rows)):
-                try:
-                    rows = driver.find_elements(By.XPATH, "//table/tbody/tr")
-                    row = rows[i]
-                    cols = row.find_elements(By.TAG_NAME, "td")
+        for row in rows:
+            cols = row.find_all("td")
 
-                    if len(cols) < 17:
-                        continue
+            if len(cols) < 17:
+                continue
 
-                    status = cols[2].text.strip().lower()
-                    mode = cols[16].text.strip().lower()
+            status = cols[2].text.strip().lower()
+            mode = cols[16].text.strip().lower()
 
-                    if status == "created" and "free" in mode:
-                        found = True
-                        log(f"✅ Approving row {i+1}")
+            if status == "created" and "free" in mode:
+                approve_link = row.select_one("a[href*='approve']")
 
-                        driver.execute_script("arguments[0].scrollIntoView(true);", row)
-                        time.sleep(1)
+                if approve_link:
+                    approve_url = BASE_URL + approve_link["href"]
 
-                        # Click Actions
-                        dropdown = row.find_element(By.XPATH, ".//button[contains(@class,'dropdown-toggle')]")
-                        driver.execute_script("arguments[0].click();", dropdown)
+                    log(f"✅ Approving: {approve_url}")
+                    session.post(approve_url)
 
-                        # Click Approve
-                        approve_btn = row.find_element(By.XPATH, ".//a[contains(text(),'Approve')]")
-                        driver.execute_script("arguments[0].click();", approve_btn)
+                    approved_count += 1
 
-                        # Handle popup
-                        wait.until(EC.alert_is_present())
-                        driver.switch_to.alert.accept()
-
-                        approved_count += 1
-                        log(f"🎉 Approved: {approved_count}")
-
-                        time.sleep(3)
-
-                        # Reload page
-                        driver.get(DATA_URL)
-                        time.sleep(5)
-
-                        break
-
-                except Exception:
-                    continue
-
-            if not found:
-                log("🚀 No more free approvals")
-                break
+        log("🚀 Completed")
 
     except Exception as e:
         log(f"❌ Error: {str(e)}")
-
-    finally:
-        driver.quit()
 
     return approved_count
 
 
 # ---------------------------------------
-# BUTTON ONLY
+# BUTTON
 # ---------------------------------------
 if st.button("🚀 Start Auto Approval"):
     log_box = st.empty()
 
-    with st.spinner("Running automation..."):
+    with st.spinner("Running..."):
         total = run_automation(log_box)
 
-    st.success(f"✅ Done! Total Approved: {total}")
+    st.success(f"✅ Total Approved: {total}")
