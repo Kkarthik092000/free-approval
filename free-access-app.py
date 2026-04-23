@@ -29,15 +29,17 @@ def run_automation(log_box):
         log_box.text("\n".join(logs))
 
     try:
+        # ---------------------------------------
         # LOGIN
+        # ---------------------------------------
         log("🔐 Logging in...")
         login_page = session.get(LOGIN_URL)
 
         soup = BeautifulSoup(login_page.text, "html.parser")
-        token = soup.find("input", {"name": "authenticity_token"})["value"]
+        csrf_token = soup.find("input", {"name": "authenticity_token"})["value"]
 
         payload = {
-            "authenticity_token": token,
+            "authenticity_token": csrf_token,
             "user[email]": EMAIL,
             "user[password]": PASSWORD
         }
@@ -45,7 +47,9 @@ def run_automation(log_box):
         session.post(LOGIN_URL, data=payload)
         log("✅ Logged in")
 
+        # ---------------------------------------
         # FETCH DATA
+        # ---------------------------------------
         log("📊 Fetching transactions...")
         page = session.get(DATA_URL)
         soup = BeautifulSoup(page.text, "html.parser")
@@ -67,10 +71,30 @@ def run_automation(log_box):
                 if approve_link:
                     approve_url = BASE_URL + approve_link["href"]
 
-                    log(f"✅ Approving: {approve_url}")
-                    session.post(approve_url)
+                    log(f"⚡ Approving: {approve_url}")
 
-                    approved_count += 1
+                    # ✅ IMPORTANT: send proper headers + token
+                    headers = {
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": DATA_URL,
+                        "X-Requested-With": "XMLHttpRequest"
+                    }
+
+                    approve_payload = {
+                        "authenticity_token": csrf_token
+                    }
+
+                    response = session.post(
+                        approve_url,
+                        data=approve_payload,
+                        headers=headers
+                    )
+
+                    if response.status_code == 200:
+                        approved_count += 1
+                        log(f"✅ Approved ({approved_count})")
+                    else:
+                        log(f"❌ Failed ({response.status_code})")
 
         log("🚀 Completed")
 
