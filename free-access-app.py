@@ -30,29 +30,42 @@ def run_automation(log_box):
 
     try:
         # ---------------------------------------
-        # LOGIN
+        # STEP 1: LOGIN PAGE
         # ---------------------------------------
-        log("🔐 Logging in...")
+        log("🔐 Opening login page...")
         login_page = session.get(LOGIN_URL)
 
         soup = BeautifulSoup(login_page.text, "html.parser")
-        csrf_token = soup.find("input", {"name": "authenticity_token"})["value"]
+        form_token = soup.find("input", {"name": "authenticity_token"})["value"]
+
+        # ---------------------------------------
+        # STEP 2: LOGIN
+        # ---------------------------------------
+        log("🔐 Logging in...")
 
         payload = {
-            "authenticity_token": csrf_token,
+            "authenticity_token": form_token,
             "user[email]": EMAIL,
             "user[password]": PASSWORD
         }
 
-        session.post(LOGIN_URL, data=payload)
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": LOGIN_URL
+        }
+
+        session.post(LOGIN_URL, data=payload, headers=headers)
         log("✅ Logged in")
 
         # ---------------------------------------
-        # FETCH DATA
+        # STEP 3: LOAD TRANSACTIONS PAGE
         # ---------------------------------------
-        log("📊 Fetching transactions...")
+        log("📊 Loading transactions page...")
         page = session.get(DATA_URL)
         soup = BeautifulSoup(page.text, "html.parser")
+
+        # ✅ IMPORTANT: get CSRF from META (NOT login page)
+        meta_token = soup.find("meta", {"name": "csrf-token"})["content"]
 
         rows = soup.select("table tbody tr")
 
@@ -73,24 +86,21 @@ def run_automation(log_box):
 
                     log(f"⚡ Approving: {approve_url}")
 
-                    # ✅ IMPORTANT: send proper headers + token
-                    headers = {
+                    approve_headers = {
                         "User-Agent": "Mozilla/5.0",
                         "Referer": DATA_URL,
+                        "Origin": BASE_URL,
+                        "X-CSRF-Token": meta_token,
                         "X-Requested-With": "XMLHttpRequest"
                     }
 
-                    approve_payload = {
-                        "authenticity_token": csrf_token
-                    }
-
+                    # ✅ NO payload needed (important)
                     response = session.post(
                         approve_url,
-                        data=approve_payload,
-                        headers=headers
+                        headers=approve_headers
                     )
 
-                    if response.status_code == 200:
+                    if response.status_code in [200, 302]:
                         approved_count += 1
                         log(f"✅ Approved ({approved_count})")
                     else:
